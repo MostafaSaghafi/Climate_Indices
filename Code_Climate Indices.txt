@@ -1,0 +1,213 @@
+// Center the mapping view on the region of interest (roi)  
+Map.centerObject(roi);  
+
+// Filter Landsat-8 imagery - For large area, use monthly
+var landsat = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')  
+              .filterBounds(roi)  
+              .filterDate('2013-04-01', '2013-05-01')  
+              .filter(ee.Filter.lessThan('CLOUD_COVER', 20));  
+
+// Function to calculate MNDWI  
+var calculateMNDWI = function(image) {  
+  var mndwi = image.normalizedDifference(['SR_B3', 'SR_B6']).rename('MNDWI');  
+  return image.addBands(mndwi);  
+};  
+
+// Function to calculate NDVI  
+var calculateNDVI = function(image) {  
+  var ndvi = image.normalizedDifference(['SR_B5', 'SR_B4']).rename('NDVI');  
+  return image.addBands(ndvi);  
+};  
+
+// Function to calculate NDBI  
+var calculateNDBI = function(image) {  
+  var ndbi = image.normalizedDifference(['SR_B5', 'SR_B6']).rename('NDBI');  
+  return image.addBands(ndbi);  
+};  
+
+// Function to calculate NDSI (Normalized Difference Snow Index)  
+var calculateNDSI = function(image) {  
+  var ndsi = image.normalizedDifference(['SR_B3', 'SR_B5']).rename('NDSI');  
+  return image.addBands(ndsi);  
+};  
+
+// Apply functions to Landsat collection  
+var landsatWithIndices = landsat.map(calculateMNDWI)  
+                                 .map(calculateNDVI)  
+                                 .map(calculateNDBI)  
+                                 .map(calculateNDSI);  
+
+// Function to extract mean values for each index  
+var extractMeanIndices = function(image) {  
+  var date = image.date().format('YYYY-MM-dd');  
+  var meanMNDWI = image.select('MNDWI').reduceRegion({  
+    reducer: ee.Reducer.mean(), // Use mean instead of max for a comprehensive view  
+    geometry: roi,  
+    scale: 30,  
+    maxPixels: 1e13  
+  }).get('MNDWI');  
+  
+  var meanNDVI = image.select('NDVI').reduceRegion({  
+    reducer: ee.Reducer.mean(),  
+    geometry: roi,  
+    scale: 30,  
+    maxPixels: 1e13  
+  }).get('NDVI');  
+  
+  var meanNDBI = image.select('NDBI').reduceRegion({  
+    reducer: ee.Reducer.mean(),  
+    geometry: roi,  
+    scale: 30,  
+    maxPixels: 1e13  
+  }).get('NDBI');  
+  
+  var meanNDSI = image.select('NDSI').reduceRegion({  
+    reducer: ee.Reducer.mean(),  
+    geometry: roi,  
+    scale: 30,  
+    maxPixels: 1e13  
+  }).get('NDSI');  
+  
+  return ee.Feature(null, {  
+    date: date,  
+    MNDWI: meanMNDWI,  
+    NDVI: meanNDVI,  
+    NDBI: meanNDBI,  
+    NDSI: meanNDSI  
+  });  
+};  
+
+// Map the function over the Landsat collection  
+var meanIndicesCollection = landsatWithIndices.map(extractMeanIndices);  
+
+// Convert to FeatureCollection  
+var uniqueMeanIndices = ee.FeatureCollection(meanIndicesCollection);  
+
+// Create a chart from the unique mean index values  
+var landsatchart = ui.Chart.feature.byFeature(uniqueMeanIndices, 'date', ['MNDWI', 'NDVI', 'NDBI', 'NDSI'])  
+  .setChartType('LineChart')  
+  .setOptions({  
+    title: 'Time Series of Indices (2013-2023)',  
+    hAxis: {title: 'Date'},  
+    vAxis: {title: 'Index Value'},  
+    series: {  
+      MNDWI: {color: 'blue'},  
+      NDVI: {color: 'green'},  
+      NDBI: {color: 'red'},  
+      NDSI: {color: 'yellow'}  
+    }  
+});  
+
+// Load the CHIRPS precipitation dataset  
+var CHIRPS = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")  
+              .filterBounds(roi)  
+              .filterDate('2013-01-01', '2023-12-31');  
+
+// Function to extract NDVI and corresponding precipitation  
+var extractNDVIandPrecipitation = function(landImage) {  
+  var date = landImage.date(); // Get the acquisition date  
+  
+  // Get the NDVI value for the Landsat image  
+  var ndvi = landImage.select('NDVI').reduceRegion({  
+    reducer: ee.Reducer.mean(),  
+    geometry: roi,  
+    scale: 30,  
+    maxPixels: 1e13  
+  }).get('NDVI');  
+  
+  // Filter CHIRPS dataset for the same date and calculate mean precipitation  
+  var precipitation = CHIRPS.filterDate(date, date.advance(1, 'day'))  
+                             .mean() // Take the mean if multiple images exist for the same day  
+                             .reduceRegion({  
+                               reducer: ee.Reducer.mean(),  
+                               geometry: roi,  
+                               scale: 30,  
+                               maxPixels: 1e13  
+                             }).get('precipitation'); // Ensure the correct property name is used  
+  
+  return ee.Feature(null, {  
+    date: date.format('YYYY-MM-dd'),  
+    NDVI: ndvi,  
+    Precipitation: precipitation  
+  });  
+};  
+
+// Map the function over the Landsat collection to combine NDVI and precipitation  
+var ndviPrecipitationCollection = landsatWithIndices.map(extractNDVIandPrecipitation);  
+
+// Convert to FeatureCollection  
+var precipitationFeatureCollection = ee.FeatureCollection(ndviPrecipitationCollection);  
+
+// Create a chart to visualize NDVI and precipitation  
+var precipitationChart = ui.Chart.feature.byFeature(precipitationFeatureCollection, 'date', ['Precipitation'])  
+  .setChartType('LineChart')  
+  .setOptions({  
+    title: 'Precipitation (2013-2023)',  
+    hAxis: {title: 'Date'},  
+    vAxis: {title: 'mm/day'},  
+    series: {  
+      NDVI: {color: 'green'},  
+      Precipitation: {color: 'blue'}  
+    }  
+});  
+
+//////////////// calculate LST//////////////////////////////////  
+// Import the Landsat 8 Surface Reflectance Tier 2 image collection  
+var LC8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')  
+  .filterBounds(roi)  
+  .filterDate('2013-01-01', '2023-12-31')  
+  .filter(ee.Filter.lessThan('CLOUD_COVER', 20));  
+
+// Function to calculate LST from Landsat 8 Level-2 data  
+function calculateLST(image) {  
+  // Extract the thermal band (Band 10)  
+  var thermalBand = image.select('ST_B10');  
+
+  // Calculate brightness temperature in Kelvin  
+  var brightnessTemp = thermalBand.multiply(0.00341802).add(149.0).subtract(273.15); // Convert to Celsius  
+
+  // Calculate LST using emissivity  
+  var emissivity = 0.95; // Typical value for most land covers  
+  var lst = brightnessTemp.divide(emissivity);  
+
+  return image.addBands(lst.rename('LST'));  
+}  
+
+// Apply the LST calculation to the image collection  
+var lstCollection = LC8.map(calculateLST);  
+
+// Function to extract date and mean LST  
+function extractMeanLST(image) {  
+  var date = image.date().format('YYYY-MM-dd');  
+  var meanLST = image.select('LST').reduceRegion({  
+    reducer: ee.Reducer.mean(),  
+    geometry: roi,  
+    scale: 30,  
+    maxPixels: 1e13  
+  }).get('LST');  
+  
+  return ee.Feature(null, {date: date, meanLST: meanLST});  
+}  
+
+// Map the function over the LST collection  
+var meanLSTCollection = lstCollection.map(extractMeanLST);  
+
+// Convert to FeatureCollection  
+var uniqueMeanLST = ee.FeatureCollection(meanLSTCollection);  
+
+// Create a chart from the unique mean LST values  
+var landsatlst = ui.Chart.feature.byFeature(uniqueMeanLST, 'date', 'meanLST')  
+  .setChartType('LineChart')  
+  .setOptions({  
+    title: 'Land Surface Temperature (2013-2023)',  
+    hAxis: {title: 'Date'},  
+    vAxis: {title: 'Temperature (°C)'},  
+    series: {meanLST: {color: 'orange'}}  
+});  
+
+// Display the charts  
+print(landsatchart); 
+print(landsatlst)
+print(precipitationChart);
+          
+          
