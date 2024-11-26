@@ -1,5 +1,6 @@
 # Climate_Indices
 Extract the climate indices such as: MNDWI, NDWI, NDBI, NDSI, Precipitation, Land Surface Temperature (LST) using Landsat-8 for 10 years
+
 -----
 This code performs analysis on Landsat-8 satellite imagery and CHIRPS precipitation data to compute and visualize various indices, precipitation, and land surface temperature (LST).
 
